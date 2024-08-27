@@ -1,9 +1,34 @@
 from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
 
+#Create flask instance
 app = Flask(__name__)
 
-#In memory list to store todo items
-todos = []
+#Configure the SQLAlchemy for the application
+app.config["SQLALCHEMY_DATABASE_URI"] = 'mysql+mysqlconnector://root:Flint346297@localhost/todo_db'
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+#Initialize SQLAlchemy object
+db = SQLAlchemy(app)
+
+#Todo model
+class Todo(db.Model):
+    __tablename__ = "todos"
+
+    id = db.Column(db.Integer, primary_key = True, autoincrement = True)
+    title = db.Column(db.String(50), nullable = False)
+    description = db.Column(db.Text)
+    completed = db.Column(db.Boolean, default = False, nullable = False)
+
+    #Method that will turn the Todo model into a dict so its easier to turn to JSON
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "completed": self.completed
+            }
+
 
 #default route
 @app.route("/")
@@ -21,50 +46,45 @@ def create_todo():
     #get the user data
     data = request.get_json()
 
-    todo_id = len(todos) + 1
-
-    #create new todo with the data from the user
+    #create new todo using the Todo model with the data from the user
     #.get function is a dictionary function that returns the value of a key if it exists
-    #if the key doesn't exist then it returns the second thing you put in
-    #the title of a todo is mandatory, so it will always exist so you don't need the .get function
-    new_todo = {
-        "id": todo_id,
-        "title": data["title"],
-        "description": data.get("description", " "),
-        "completed": data.get("completed", False)
-    }
-
-    #append the todo onto the list
-    todos.append(new_todo)
+    new_todo = Todo(
+        title = data["title"],
+        description = data.get("description", ""),
+        completed = data.get("completed", False)
+    )
+        
+    #add the todo in the database then commit the changes
+    db.session.add(new_todo)
+    db.session.commit()
 
     #201 is the status code for successfully created
-    return jsonify({"message": "Todo created successfully", "todo": new_todo}), 201
+    return jsonify({"message": "Todo created successfully", "todo": new_todo.to_dict()}), 201
 
 
 #Get all the todos
 @app.route("/todos", methods=["GET"])
 def get_todos():
 
+    #Query all the todos 
+    todos = Todo.query.all()
+
+    #return each todo in the list
     #200 is the status code for successful retrieval "OK"
-    return jsonify(todos), 200
+    return jsonify([todo.to_dict() for todo in todos]), 200
 
 
 #Get a specific todo 
 @app.route("/todos/<int:todo_id>", methods=["GET"])
 def get_todo(todo_id):
 
-    todo = None
+    #Query to find the todo with the id
+    todo = Todo.query.get(todo_id)
 
-    #Iterate through the todo list to find the matching todo
-    for item in todos:
-        if item["id"] == todo_id:
-            todo = item
-            break
-    
     #If the todo is found, return it
     #If not, return a corresponding message
     if todo:
-        return jsonify(todo), 200
+        return jsonify(todo.to_dict()), 200
     else:
         #404 is the status code for not found
         return jsonify({"error": "Todo not found"}), 404
@@ -74,50 +94,36 @@ def get_todo(todo_id):
 @app.route("/todos/<int:todo_id>", methods=["PUT"])
 def update_todo(todo_id):
 
-    todo = None
+    #Collect data
+    data = request.get_json()
 
-    #Iterate through the list to find the todo needed to be updated
-    for item in todos:
-        if item["id"] == todo_id:
-            todo = item
-            break
-    
+    #Query to find the todo
+    todo = Todo.query.get(todo_id)
+
     if todo:
+        todo.title = data.get("title", todo.title)
+        todo.description = data.get("description", todo.description)
+        todo.completed = data.get("completed", todo.completed)
 
-        #Collect the data from the user
-        data = request.get_json()
+        db.session.commit()
+        return jsonify({"message": "Todo updated successfully", "todo": todo.to_dict()}), 200
 
-        #Update the todo, if the key wasn't updated, keep the value the same
-        todo["title"] = data.get("title", todo["title"])
-        todo["description"] = data.get("description", todo["description"])
-        todo["completed"] = data.get("completed", todo["completed"])
-
-        return jsonify({"message": "Todo updated successfully", "todo": todo}), 200
-    else:
-        return jsonify({"error": "Todo not found"}), 404
-
+    return jsonify({"error": "Todo not found"}), 404
 
 
 #Delete a specific todo
 @app.route("/todos/<int:todo_id>", methods=["DELETE"])
 def delete_todo(todo_id):
     
-    #Declare the todos variable global so it is accessible within the function
-    global todos
+    #Query to find the todo with the id
+    todo = Todo.query.get(todo_id)
 
-    #create a new todos list, that will hold all the todos except the one to be deleted
-    new_todos = []
+    if todo:
+        db.session.delete(todo)
+        db.session.commit()
+        return jsonify({"message": "Todo deleted successfully"}), 200
 
-    #Iterate through the current todos, add all the ones except the deleted one to the new_todos
-    for todo in todos:
-        if todo["id"] != todo_id:
-            new_todos.append(todo)
-    
-    #Update the current list
-    todos = new_todos
-
-    #return the appropriate message
-    return jsonify({"message": "Todo deleted successfully"}), 200
+    return jsonify({"error": "Todo not found"}), 404
 
 
 #Runs only when the script is run directly
